@@ -35,7 +35,7 @@ Two options:
 
 1.  **Install as a package (recommended):**
     ```bash
-    git clone https://github.com/Norwyx/cs50p-project.git
+    git clone https://github.com/Norwyx/cs50p-vault.git
     cd cs50p-project
     python -m venv .venv
     source .venv/bin/activate
@@ -45,7 +45,7 @@ Two options:
 
 2.  **Run from source:**
     ```bash
-    git clone https://github.com/Norwyx/cs50p-project.git
+    git clone https://github.com/Norwyx/cs50p-vault.git
     cd cs50p-project
     python3 -m venv .venv
     source .venv/bin/activate
