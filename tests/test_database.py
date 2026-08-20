@@ -52,6 +52,41 @@ def test_update_master_password():
     conn.close()
 
 
+def test_set_master_password_is_idempotent():
+    """
+    Tests that setting the master password repeatedly keeps a single row.
+    """
+    conn = database.get_db_connection(":memory:")
+    database.init_db(conn)
+    salt = generate_salt()
+    key_salt = generate_salt()
+    database.set_master_password(conn, hashed_password, salt, key_salt)
+    database.set_master_password(conn, hashed_password, salt, key_salt)
+    count = conn.execute("SELECT COUNT(*) FROM master_password").fetchone()[0]
+    assert count == 1
+    conn.close()
+
+
+def test_update_credential_missing_returns_false():
+    """
+    Tests that updating a credential for a non-existent service returns False.
+    """
+    conn = database.get_db_connection(":memory:")
+    database.init_db(conn)
+    assert database.update_credential(conn, "missing", "user", b"password") is False
+    conn.close()
+
+
+def test_delete_credential_missing_returns_false():
+    """
+    Tests that deleting a credential for a non-existent service returns False.
+    """
+    conn = database.get_db_connection(":memory:")
+    database.init_db(conn)
+    assert database.delete_credential(conn, "missing") is False
+    conn.close()
+
+
 def test_add_and_get_credential():
     """
     Tests the addition and retrieval of a single credential.
