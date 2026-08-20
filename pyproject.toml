@@ -1,6 +1,26 @@
-[project]
-name = "cs50p-project"
-version = "0.1.0"
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[project]
+name = "cs50p-vault"
+version = "0.1.0"
+description = "A secure, command-line password manager storing encrypted credentials in a local SQLite database."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "argon2-cffi>=21.3.0",
+    "art",
+    "cryptography",
+    "pyperclip",
+    "rich",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+cs50p-vault = "src.main:main"
+
+[tool.setuptools]
+packages = ["src"]
