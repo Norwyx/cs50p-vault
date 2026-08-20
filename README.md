@@ -31,58 +31,60 @@ Security is the cornerstone of this application. The following measures have bee
 
 ## Installation
 
-To get started with CS50P Vault, follow these steps:
+Two options:
 
-1.  **Clone the repository:**
+1.  **Install as a package (recommended):**
     ```bash
-    git clone https://github.com/your-username/cs50p-project.git
+    git clone https://github.com/Norwyx/cs50p-project.git
     cd cs50p-project
+    python -m venv .venv
+    source .venv/bin/activate
+    pip install .
+    cs50p-vault
     ```
 
-2.  **Create and activate a virtual environment:**
+2.  **Run from source:**
     ```bash
-    # For macOS/Linux
+    git clone https://github.com/Norwyx/cs50p-project.git
+    cd cs50p-project
     python3 -m venv .venv
     source .venv/bin/activate
-
-    # For Windows
-    python -m venv .venv
-    .\.venv\Scripts\activate
-    ```
-
-3.  **Install the required dependencies:**
-    ```bash
     pip install -r requirements.txt
-    ```
-
-## Usage
-
-1.  **Run the application:**
-    ```bash
     python src/main.py
     ```
 
-2.  **First-Time Setup:**
-    - The first time you run the vault, you will be prompted to enter your name and set a strong master password.
+The vault database (`vault.db`) is created in the directory where you run the command — keep it private and back it up; it is the only file holding your data.
 
-3.  **Main Menu:**
-    - Once unlocked, you will be presented with a menu of options to manage your credentials.
+## Running the Tests
 
-    ```
-     CS50P Vault Menu
+```bash
+pip install -e ".[dev]"   # installs the package plus pytest
+pytest
+```
 
-     Option      Action
-    ────────────────────────────────────
-     1           Add a new credential
-     2           Get a credential
-     3           List all credentials
-     4           Update a credential
-     5           Delete a credential
+The tests need to be run from the repository root and use in-memory databases, so they never touch a real `vault.db`.
 
-     6           Change master password
-     7           Lock vault
-     8           Exit
-    ```
+## Usage
+
+The first time you run the vault, you will be prompted to enter your name and set a strong master password (at least 8 characters). Once unlocked, you will be presented with a menu of options to manage your credentials:
+
+```
+ CS50P Vault Menu
+
+ Option      Action
+────────────────────────────────────
+ 1           Add a new credential
+ 2           Get a credential
+ 3           List all credentials
+ 4           Update a credential
+ 5           Delete a credential
+
+ 6           Change master password
+ 7           Lock vault
+ 8           Exit
+```
+
+Changing the master password re-encrypts all stored credentials with the new key, so no data is lost. Retrieved passwords are copied to the clipboard and automatically cleared 10 seconds later.
 
 ## Project Structure
 
@@ -97,6 +99,8 @@ The project is organized with a clear separation of concerns, making it modular 
 ├── tests/
 │   ├── test_database.py # Unit tests for the database module
 │   ├── test_security.py # Unit tests for the security module
-├── requirements.txt     # Project dependencies
+│   └── test_vault.py    # Unit tests for vault and master password workflows
+├── pyproject.toml       # Packaging and dependencies
+├── requirements.txt     # Runtime dependencies (source-run only)
 └── README.md            # You are here!
 ```
