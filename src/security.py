@@ -2,7 +2,7 @@ import base64
 import os
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -59,7 +59,7 @@ def verify_password(hashed_password: str, password: str) -> bool:
     try:
         ph.verify(hashed_password, password)
         return True
-    except VerifyMismatchError:
+    except (VerifyMismatchError, InvalidHashError, VerificationError):
         return False
 
 

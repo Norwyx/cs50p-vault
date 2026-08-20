@@ -1,17 +1,41 @@
 from art import tprint
 import getpass
+import os
 import sqlite3
-import database
-import security
+import threading
+import time
+
+from cryptography.fernet import InvalidToken
 from rich.console import Console
 from rich.table import Table
 import pyperclip
-import os
-import time
+
+try:
+    import database
+    import security
+except ModuleNotFoundError:
+    from src import database
+    from src import security
 
 
 DB_PATH = "vault.db"
+MIN_PASSWORD_LENGTH = 8
+CLIPBOARD_CLEAR_SECONDS = 10
+MAX_UNLOCK_DELAY = 5
 console = Console()
+
+
+def validate_master_password(password: str) -> str | None:
+    """
+    Validates a proposed master password.
+
+    Returns:
+        An error message describing why the password is not acceptable,
+        or None if the password meets the requirements.
+    """
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters long."
+    return None
 
 
 class Vault:
@@ -62,16 +86,22 @@ class Vault:
             password = getpass.getpass("Master Password: ")
             confirm_password = getpass.getpass("Confirm Master Password: ")
 
-            if password == confirm_password:
-                salt = security.generate_salt()
-                key_salt = security.generate_salt()
-                hashed_password = security.hash_password(password)
-                database.set_master_password(self.conn, hashed_password, salt, key_salt)
-                print("Master password set successfully!")
-                print()
-                break
-            else:
+            if password != confirm_password:
                 print("Passwords do not match. Please try again.")
+                continue
+
+            error = validate_master_password(password)
+            if error:
+                console.print(f"\n[bold red]Error:[/bold red] {error}\n")
+                continue
+
+            salt = security.generate_salt()
+            key_salt = security.generate_salt()
+            hashed_password = security.hash_password(password)
+            database.set_master_password(self.conn, hashed_password, salt, key_salt)
+            print("Master password set successfully!")
+            print()
+            break
 
     def lock(self):
         """
@@ -87,12 +117,14 @@ class Vault:
 
         Prompts the user for the master password and verifies it against the stored hash.
         If successful, it derives the encryption key and sets the vault to an unlocked state.
+        Repeated failures are throttled with an increasing delay to slow down brute-force attempts.
         """
         master_password_data = database.get_master_password(self.conn)
         if not master_password_data:
             return
-        
+
         hashed_password, _, key_salt = master_password_data
+        failed_attempts = 0
 
         while True:
             password = getpass.getpass("Enter Master Password: ")
@@ -100,8 +132,9 @@ class Vault:
                 self._encryption_key = security.derive_key(password, key_salt)
                 console.print("\n[bold green]Vault unlocked![/bold green]")
                 break
-            else:
-                console.print("\n[bold red]Error:[/bold red] Invalid password. Please try again.\n")
+            failed_attempts += 1
+            console.print("\n[bold red]Error:[/bold red] Invalid password. Please try again.\n")
+            time.sleep(min(2 ** (failed_attempts - 1), MAX_UNLOCK_DELAY))
 
     def get_master_password(self):
         """
@@ -118,8 +151,9 @@ class Vault:
         Allows the user to change the master password.
 
         Requires the vault to be unlocked. Prompts for the old password for verification,
-        then prompts for a new password and its confirmation. If valid, updates the
-        hashed password, salts, and encryption key in the database.
+        then prompts for a new password and its confirmation. If valid, re-encrypts all
+        stored credentials with the new key, updates the hashed password and salts in the
+        database, and swaps the in-memory encryption key.
         """
         if self.is_locked:
             print("Please unlock the vault first.")
@@ -129,7 +163,7 @@ class Vault:
         if not master_password_data:
             console.print("\n[bold red]Error:[/bold red] No master password set.\n")
             return
-        
+
         old_password_hash, _, _ = master_password_data
         old_password = getpass.getpass("Enter old master password: ")
 
@@ -137,17 +171,45 @@ class Vault:
             console.print("\n[bold red]Error:[/bold red] Invalid old password.\n")
             return
 
-        new_password = getpass.getpass("Enter new master password: ")
-        confirm_password = getpass.getpass("Confirm new master password: ")
+        while True:
+            new_password = getpass.getpass("Enter new master password: ")
+            confirm_password = getpass.getpass("Confirm new master password: ")
 
-        if new_password == confirm_password:
-            salt = security.generate_salt()
-            key_salt = security.generate_salt()
-            new_password_hash = security.hash_password(new_password)
-            database.update_master_password(self.conn, new_password_hash, salt, key_salt)
-            console.print("\n[bold green]Master password updated successfully![/bold green]\n")
-        else:
-            console.print("\n[bold red]Error:[/bold red] Passwords do not match.\n")
+            if new_password != confirm_password:
+                console.print("\n[bold red]Error:[/bold red] Passwords do not match.\n")
+                continue
+
+            error = validate_master_password(new_password)
+            if error:
+                console.print(f"\n[bold red]Error:[/bold red] {error}\n")
+                continue
+
+            break
+
+        salt = security.generate_salt()
+        key_salt = security.generate_salt()
+        new_password_hash = security.hash_password(new_password)
+        new_key = security.derive_key(new_password, key_salt)
+
+        credentials = database.get_all_credentials(self.conn) or []
+        re_encrypted = []
+        try:
+            for credential in credentials:
+                decrypted_password = security.decrypt(credential["encrypted_password"], self._encryption_key)
+                re_encrypted.append(
+                    (credential["service"], credential["username"],
+                     security.encrypt(decrypted_password, new_key))
+                )
+        except InvalidToken:
+            console.print("\n[bold red]Error:[/bold red] Could not re-encrypt credentials. Operation aborted.\n")
+            return
+
+        for service, username, encrypted_password in re_encrypted:
+            database.update_credential(self.conn, service, username, encrypted_password)
+
+        database.update_master_password(self.conn, new_password_hash, salt, key_salt)
+        self._encryption_key = new_key
+        console.print("\n[bold green]Master password updated successfully![/bold green]\n")
 
     def add_credential(self):
         """
@@ -180,7 +242,7 @@ class Vault:
 
         Requires the vault to be unlocked. Prompts for the service name, retrieves the
         credential from the database, decrypts the password, displays the username,
-        and copies the password to the clipboard.
+        and copies the password to the clipboard. The clipboard is cleared shortly after.
         """
         if self.is_locked:
             console.print("\n[bold red]Error:[/bold red] Please unlock the vault first.")
@@ -190,12 +252,19 @@ class Vault:
         credential = database.get_credential(self.conn, service)
 
         if credential:
-            decrypted_password = security.decrypt(
-                credential["encrypted_password"], self._encryption_key
-            )
-            
+            try:
+                decrypted_password = security.decrypt(
+                    credential["encrypted_password"], self._encryption_key
+                )
+            except InvalidToken:
+                console.print("\n[bold red]Error:[/bold red] Failed to decrypt this credential. The vault data may be corrupted.")
+                time.sleep(5)
+                clear_screen()
+                return
+
             console.print(f"Username: {credential['username']}")
             pyperclip.copy(decrypted_password)
+            threading.Timer(CLIPBOARD_CLEAR_SECONDS, pyperclip.copy, args=("",)).start()
             console.print("[bold green]Password copied to clipboard.[/bold green]")
             time.sleep(8)
             clear_screen()
@@ -219,7 +288,12 @@ class Vault:
 
         if credentials:
             for credential in credentials:
-                console.print(f"[bold]Service[/bold]: {credential['service']}, [bold]Username[/bold]: {credential['username']}, [bold]Password[/bold]: {len(security.decrypt(credential['encrypted_password'], self._encryption_key)) * '*'}")
+                try:
+                    password_length = len(security.decrypt(credential["encrypted_password"], self._encryption_key))
+                except InvalidToken:
+                    console.print(f"[bold red]Error:[/bold red] Could not decrypt '{credential['service']}'. The vault data may be corrupted.")
+                    continue
+                console.print(f"[bold]Service[/bold]: {credential['service']}, [bold]Username[/bold]: {credential['username']}, [bold]Password[/bold]: {'*' * password_length}")
             console.print("\nIf you want to get an specific password, use option 2 instead.")
             time.sleep(8)
             clear_screen()
@@ -240,6 +314,13 @@ class Vault:
             return
 
         service = input("Service: ")
+
+        if not database.get_credential(self.conn, service):
+            console.print("\n[bold red]Error:[/bold red] Credential not found.\n")
+            time.sleep(5)
+            clear_screen()
+            return
+
         new_username = input("New username: ")
         new_password = getpass.getpass("New password: ")
         print()
@@ -263,8 +344,11 @@ class Vault:
 
         service = input("Service: ")
         console.print()
-        database.delete_credential(self.conn, service)
-        console.print("[bold green]Credential deleted successfully![/bold green]")
+
+        if database.delete_credential(self.conn, service):
+            console.print("[bold green]Credential deleted successfully![/bold green]")
+        else:
+            console.print("\n[bold red]Error:[/bold red] Credential not found.\n")
         time.sleep(5)
         clear_screen()
 
@@ -277,6 +361,8 @@ def main() -> None:
     and authentication, and then enters the main application loop to process user commands.
     """
     conn = database.get_db_connection(DB_PATH)
+    if conn is None:
+        return
     vault = Vault(conn)
 
     user_name = database.get_user_name(conn)
@@ -316,7 +402,7 @@ def main() -> None:
             clear_screen()
             console.print("Vault locked.")
             time.sleep(3)
-            
+
         elif choice == "8":
             console.print("Goodbye!")
             console.print()
@@ -346,19 +432,19 @@ def print_menu() -> None:
     table.add_row("[bold]3[/bold]", "List all credentials")
     table.add_row("[bold]4[/bold]", "Update a credential")
     table.add_row("[bold]5[/bold]", "Delete a credential")
-    table.add_row("", "") 
+    table.add_row("", "")
     table.add_row("[bold]6[/bold]", "Change master password")
     table.add_row("[bold]7[/bold]", "Lock vault")
     table.add_row("[bold]8[/bold]", "Exit")
 
     console.print()
-    console.print(table)  
+    console.print(table)
 
 
 def clear_screen() -> None:
     """
     Clears the terminal screen.
-    
+
     This function checks the operating system and uses the appropriate
     command ('cls' for Windows, 'clear' for macOS/Linux).
     """

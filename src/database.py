@@ -89,12 +89,12 @@ def set_master_password(conn: sqlite3.Connection, hashed_password: str, salt: by
     """
     try:
         conn.execute(
-            "INSERT INTO master_password (hashed_password, salt, key_salt) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO master_password (id, hashed_password, salt, key_salt) VALUES (1, ?, ?, ?)",
             (hashed_password, salt, key_salt),
         )
         conn.commit()
-    except sqlite3.IntegrityError:
-        console.print("\n[bold red]Error:[/bold red] Master password already exists Try a different one.\n")
+    except sqlite3.Error as e:
+        console.print(f"\n[bold red]Error:[/bold red] {e}\n")
 
 
 def get_master_password(conn: sqlite3.Connection) -> tuple[str, bytes, bytes] | None:
@@ -133,8 +133,8 @@ def update_master_password(conn: sqlite3.Connection, hashed_password: str, salt:
             (hashed_password, salt, key_salt),
         )
         conn.commit()
-    except sqlite3.IntegrityError:
-        console.print("\n[bold red]Error:[/bold red] Master password already exists Try a different one.\n")
+    except sqlite3.Error as e:
+        console.print(f"\n[bold red]Error:[/bold red] {e}\n")
 
 
 # CRUD functions for credentials
@@ -206,7 +206,7 @@ def get_all_credentials(conn: sqlite3.Connection) -> list[tuple]:
         return None
 
 
-def update_credential(conn: sqlite3.Connection, service: str, new_username: str, new_encrypted_password: bytes) -> None:
+def update_credential(conn: sqlite3.Connection, service: str, new_username: str, new_encrypted_password: bytes) -> bool:
     """
     Updates an existing credential in the database.
 
@@ -215,30 +215,40 @@ def update_credential(conn: sqlite3.Connection, service: str, new_username: str,
         service: The service whose credential is to be updated.
         new_username: The new username for the service.
         new_encrypted_password: The new encrypted password for the service.
+
+    Returns:
+        True if a credential was updated, False if the service does not exist.
     """
     try:
-        conn.execute(
+        cursor = conn.execute(
             "UPDATE credentials SET username = ?, encrypted_password = ? WHERE service = ?",
             (new_username, new_encrypted_password, service),
         )
         conn.commit()
+        return cursor.rowcount > 0
     except sqlite3.Error as e:
         console.print(f"\n[bold red]Error:[/bold red] {e}\n")
+        return False
 
 
-def delete_credential(conn: sqlite3.Connection, service: str) -> None:
+def delete_credential(conn: sqlite3.Connection, service: str) -> bool:
     """
     Deletes a credential from the database by its service name.
 
     Args:
         conn: The `sqlite3.Connection` object.
         service: The name of the service to delete.
+
+    Returns:
+        True if a credential was deleted, False if the service does not exist.
     """
     try:
-        conn.execute("DELETE FROM credentials WHERE service = ?", (service,))
+        cursor = conn.execute("DELETE FROM credentials WHERE service = ?", (service,))
         conn.commit()
+        return cursor.rowcount > 0
     except sqlite3.Error as e:
         console.print(f"\n[bold red]Error:[/bold red] {e}\n")
+        return False
 
 
 # CRUD functions for user
